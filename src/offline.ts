@@ -33,6 +33,29 @@ function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
         reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
+  });
+}
+
+export async function checkOffline(): Promise<OfflineReport> {
+  const base = import.meta.env.BASE_URL;
+  const lines: string[] = [`base: ${base}`, `страница: ${location.href}`];
+
+  // 1. Поддержка и регистрация Service Worker
+  if (!('serviceWorker' in navigator)) {
+    lines.push('serviceWorker: не поддерживается этим браузером или контекстом');
+    return { verdict: 'unsupported', lines };
+  }
+  const registration = await withTimeout(navigator.serviceWorker.getRegistration(), 'getRegistration');
+  if (!registration) {
+    lines.push('регистрация SW: нет');
+    return { verdict: 'no-worker', lines };
+  }
+  lines.push(`scope регистрации: ${registration.scope}`);
+  lines.push(
+    `active: ${registration.active ? registration.active.state : 'нет'}; ` +
+      `waiting: ${registration.waiting ? registration.waiting.state : 'нет'}; ` +
+      `installing: ${registration.installing ? registration.installing.state : 'нет'}`,
+  );
   if (registration.active) lines.push(`скрипт SW: ${registration.active.scriptURL}`);
 
   // 2. Управляет ли SW этой страницей
@@ -70,3 +93,4 @@ function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
   if (!controller) return { verdict: 'not-controlling', lines };
   if (!indexCached || !bundleCached) return { verdict: 'cache-incomplete', lines };
   return { verdict: 'ready', lines };
+}
