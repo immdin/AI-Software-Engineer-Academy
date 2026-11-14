@@ -33,6 +33,52 @@ function useOnline(): boolean {
   return online;
 }
 
+const OFFLINE_TEXT: Record<OfflineVerdict, { value: string; hint?: string; status: Status }> = {
+  ready: { value: 'Готов: приложение откроется без сети', status: 'ok' },
+  'not-controlling': {
+    value: 'Кэш создан, но страница ещё не под управлением Service Worker',
+    hint: 'Полностью закройте приложение (смахните из списка недавних) и откройте снова.',
+    status: 'wait',
+  },
+  'cache-incomplete': {
+    value: 'Service Worker работает, но нужных файлов в кэше нет',
+    hint: 'Откройте технический отчёт ниже и пришлите его.',
+    status: 'warn',
+  },
+  'no-worker': {
+    value: 'Service Worker не активен',
+    hint: 'Первая установка занимает несколько секунд. Если не изменится, пришлите технический отчёт.',
+    status: 'warn',
+  },
+  'wrong-scope': {
+    value: 'Service Worker зарегистрирован на другой путь',
+    hint: 'Пришлите технический отчёт.',
+    status: 'warn',
+  },
+  unsupported: { value: 'Service Worker не поддерживается', status: 'warn' },
+  error: { value: 'Не удалось проверить', hint: 'Пришлите технический отчёт.', status: 'warn' },
+};
+
+/** Проверяет офлайн-готовность при запуске и повторяет её до 10 раз, пока SW устанавливается. */
+function useOfflineReport(recheck: number): OfflineReport | null {
+  const [report, setReport] = useState<OfflineReport | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
+    let timer: number | undefined;
+    const run = async () => {
+      try {
+        const result = await checkOffline();
+        if (cancelled) return;
+        setReport(result);
+        if (result.verdict !== 'ready' && attempts++ < 10) timer = window.setTimeout(() => void run(), 2000);
+      } catch (error: unknown) {
+        if (!cancelled) setReport({ verdict: 'error', lines: [String(error)] });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [recheck]);
@@ -69,6 +115,71 @@ export function App() {
 
   const installed =
     window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+  useEffect(() => {
+    recordVisit()
+      .then(setVisit)
+      .catch((error: unknown) => setVisitError(String(error)));
+    requestPersistence()
+      .then(setPersist)
+      .catch(() => setPersist('unsupported'));
+  }, []);
+
+  return (
+    <main className="screen">
+      <header>
+        <h1>AI Software Engineer Academy</h1>
+        <p className="sub">Шаг 0: проверка цепочки «репозиторий → публикация → телефон»</p>
+      </header>
+
+      {needRefresh ? (
+        <div className="banner" role="status">
+          <span>Доступна новая версия приложения.</span>
+          <button type="button" onClick={() => void updateServiceWorker(true)}>
+            Обновить
+          </button>
+        </div>
+      ) : null}
+
+      <ul className="rows">
+        <Row
+          label="Сборка"
+          value={new Date(__BUILD_TIME__).toLocaleString('ru-RU')}
+          status="ok"
+          hint="Время, когда GitHub собрал эту версию. После нового коммита оно должно измениться."
+        />
+        <Row
+          label="Режим запуска"
+          value={installed ? 'Установлено как приложение' : 'Открыто во вкладке браузера'}
+          status={installed ? 'ok' : 'wait'}
+          hint={installed ? undefined : 'Установите: меню браузера → «Установить приложение».'}
+        />
+        <Row
+          label="Сеть"
+          value={online ? 'Есть интернет' : 'Интернета нет'}
+          status={online ? 'ok' : 'warn'}
+          hint="Включите режим полёта и перезапустите приложение: страница должна открыться."
+        />
+        <Row
+          label="Офлайн-кэш"
+          value={offlineText ? offlineText.value : 'Проверяю…'}
+          status={offlineText ? offlineText.status : 'wait'}
+          hint={offlineText?.hint}
+        />
+        <Row
+          label="Локальная база (IndexedDB)"
+          value={
+            visitError
+              ? `Ошибка: ${visitError}`
+              : visit
+                ? `Запусков записано: ${visit.total}`
+                : 'Проверяю…'
+          }
+          status={visitError ? 'warn' : visit ? 'ok' : 'wait'}
+          hint={
+            visit?.lastVisit
+              ? `Предыдущий запуск: ${new Date(visit.lastVisit).toLocaleString('ru-RU')}. Счётчик должен расти после каждого перезапуска, в том числе офлайн.`
               : 'Счётчик должен расти после каждого перезапуска, в том числе офлайн.'
           }
         />
